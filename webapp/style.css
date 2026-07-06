@@ -1,0 +1,140 @@
+/* style.css — Wardrobe webapp */
+
+:root {
+  --bg: #f4f2ee;
+  --card: #ffffff;
+  --ink: #24211c;
+  --muted: #7a7368;
+  --line: #e3ded5;
+  --accent: #2f5d50;
+  --accent-ink: #ffffff;
+  --warn: #a05a2c;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191713;
+    --card: #242019;
+    --ink: #ece7dd;
+    --muted: #9d968a;
+    --line: #37322a;
+    --accent: #6fae9d;
+    --accent-ink: #10201b;
+    --warn: #d99a63;
+  }
+}
+
+* { box-sizing: border-box; margin: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.5 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 20px 16px 60px;
+}
+
+header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+h1 { font-size: 1.5rem; }
+
+nav .tab-btn, .occ-btn {
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 7px 16px;
+  font-size: 0.92rem;
+  cursor: pointer;
+}
+nav .tab-btn.active, .occ-btn.active {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+
+#sample-banner {
+  background: color-mix(in srgb, var(--warn) 12%, var(--card));
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--line));
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 0.88rem;
+  margin-bottom: 14px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 16px;
+  margin-bottom: 14px;
+}
+
+#weather { display: flex; gap: 14px; align-items: center; }
+.wx-icon { font-size: 2.4rem; }
+.wx-temp { font-size: 1.35rem; font-weight: 650; }
+.wx-label { font-size: 0.9rem; font-weight: 400; color: var(--muted); }
+.wx-detail { font-size: 0.86rem; color: var(--muted); }
+
+.occ-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.occ-label { font-size: 0.88rem; color: var(--muted); margin-right: 4px; }
+
+.plan-note {
+  font-size: 0.9rem;
+  padding: 9px 14px;
+  margin-bottom: 10px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--card));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line));
+  border-radius: 10px;
+}
+
+.outfit {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 16px;
+  margin-bottom: 14px;
+}
+.outfit.primary { border-color: var(--accent); border-width: 2px; }
+.outfit-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.outfit-header h3 { font-size: 1.05rem; }
+
+.wear-btn {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.wear-btn:disabled { opacity: 0.6; cursor: default; }
+
+.outfit-items, .closet-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 10px;
+}
+
+.item-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg);
+}
+.item-photo, .item-swatch { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
+.item-swatch { display: flex; align-items: center; justify-content: center; font-size: 2.2rem; }
+.item-meta { padding: 8px 10px; }
+.item-slot { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.item-name { font-size: 0.88rem; font-weight: 600; line-height: 1.25; margin: 2px 0; }
+.item-tags { font-size: 0.76rem; color: var(--muted); }
+
+.why { margin: 12px 4px 0; padding-left: 20px; font-size: 0.88rem; }
+.why li { margin-bottom: 3px; }
+.why .warn { color: var(--warn); }
+
+#closet h3 { margin: 18px 4px 10px; font-size: 1rem; }
+#closet .count { color: var(--muted); font-weight: 400; font-size: 0.85rem; }
+
+.empty { color: var(--muted); padding: 12px; }
+code { background: color-mix(in srgb, var(--ink) 8%, transparent); padding: 1px 5px; border-radius: 4px; font-size: 0.86em; }

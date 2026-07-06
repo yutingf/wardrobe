@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wardrobe: what to wear today</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>👔 Wardrobe</h1>
+    <nav>
+      <button class="tab-btn active" data-tab="today">Today</button>
+      <button class="tab-btn" data-tab="closet">Closet</button>
+    </nav>
+  </header>
+
+  <div id="sample-banner" hidden>
+    Showing <strong>sample clothes</strong>. Drop photos of your own into
+    <code>closet/photos/</code>, then ask Claude to catalog them; sample items
+    get replaced as your real closet fills in.
+  </div>
+
+  <main id="today-view">
+    <section id="weather" class="card">Loading weather…</section>
+
+    <section class="card">
+      <div class="occ-row">
+        <span class="occ-label">Dressing for</span>
+        <button class="occ-btn active" data-occasion="work">Work</button>
+        <button class="occ-btn" data-occasion="school">School</button>
+        <button class="occ-btn" data-occasion="kids">Kids event</button>
+      </div>
+    </section>
+
+    <section id="outfits"></section>
+  </main>
+
+  <main id="closet-view" hidden>
+    <section id="closet"></section>
+  </main>
+
+  <script src="../closet/catalog.js"></script>
+  <script src="engine.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
