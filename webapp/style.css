@@ -155,6 +155,17 @@ nav .tab-btn.active, .occ-btn.active {
   margin-bottom: 12px;
 }
 .angle-ask .mini-btn { margin-left: 8px; color: var(--warn); border-color: var(--warn); }
+
+#camera-modal { position: fixed; inset: 0; background: #000; z-index: 50; display: flex; flex-direction: column; }
+#camera-modal[hidden] { display: none; }
+#camera-video { flex: 1; min-height: 0; width: 100%; object-fit: cover; }
+.camera-controls { display: flex; align-items: center; justify-content: center; gap: 22px; padding: 16px; background: #000; }
+#camera-shutter {
+  width: 64px; height: 64px; border-radius: 50%;
+  background: #fff; border: 4px solid #999; cursor: pointer;
+}
+#camera-close { color: #fff; border-color: #fff; }
+#camera-count { color: #fff; font-size: 0.9rem; min-width: 70px; }
 #review .hint { display: block; margin: 4px 4px 12px; }
 
 .outfit-items, .closet-grid {

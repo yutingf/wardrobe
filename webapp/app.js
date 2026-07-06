@@ -119,6 +119,13 @@ function autoLogTopPick(outfit) {
 const $ = sel => document.querySelector(sel);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+function activateTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  $('#today-view').hidden = tab !== 'today';
+  $('#closet-view').hidden = tab !== 'closet';
+  $('#add-view').hidden = tab !== 'add';
+}
+
 function photoUrl(it) {
   if (it._photoUrls && it._photoUrls.length) return it._photoUrls[0];
   if (it.photos && it.photos.length) return `../closet/photos/${it.photos[0]}`;
@@ -355,6 +362,50 @@ async function clearStagingDB() {
   await DBX.deletePhotos((await DBX.listPhotos('staging-')).map(r => r.key));
 }
 
+// ------------------------------------------------------------------ in-page camera
+
+// The camera runs INSIDE the page (getUserMedia viewfinder + shutter). The
+// system-camera file input is only a fallback: switching to the camera app
+// makes iOS evict this page, and the returned photo is delivered to a page
+// that no longer exists — the shot is lost before it can be staged.
+let cameraStream = null;
+
+async function openCamera() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    $('#camera-input').click();
+    return;
+  }
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1920 } },
+      audio: false,
+    });
+  } catch {
+    $('#camera-input').click(); // permission denied: fall back to the system camera
+    return;
+  }
+  $('#camera-video').srcObject = cameraStream;
+  $('#camera-count').textContent = stagedPhotos.length ? `${stagedPhotos.length} staged` : '';
+  $('#camera-modal').hidden = false;
+}
+
+function closeCamera() {
+  if (cameraStream) { cameraStream.getTracks().forEach(t => t.stop()); cameraStream = null; }
+  $('#camera-video').srcObject = null;
+  $('#camera-modal').hidden = true;
+}
+
+async function captureFrame() {
+  const video = $('#camera-video');
+  if (!video.videoWidth) return;
+  const c = document.createElement('canvas');
+  c.width = video.videoWidth; c.height = video.videoHeight;
+  c.getContext('2d').drawImage(video, 0, 0);
+  const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.9));
+  await stageFiles([new File([blob], `shot-${Date.now()}.jpg`, { type: 'image/jpeg' })]);
+  $('#camera-count').textContent = `${stagedPhotos.length} staged`;
+}
+
 async function analyzeStaged() {
   if (!stagedPhotos.length) return;
   const status = $('#cat-status');
@@ -421,15 +472,12 @@ async function main() {
     rerun();
   }));
 
-  document.querySelectorAll('.tab-btn').forEach(btn => btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b === btn));
-    $('#today-view').hidden = btn.dataset.tab !== 'today';
-    $('#closet-view').hidden = btn.dataset.tab !== 'closet';
-    $('#add-view').hidden = btn.dataset.tab !== 'add';
-  }));
+  document.querySelectorAll('.tab-btn').forEach(btn => btn.addEventListener('click', () => activateTab(btn.dataset.tab)));
 
   $('#upload-btn').addEventListener('click', () => $('#photo-input').click());
-  $('#camera-btn').addEventListener('click', () => $('#camera-input').click());
+  $('#camera-btn').addEventListener('click', openCamera);
+  $('#camera-shutter').addEventListener('click', captureFrame);
+  $('#camera-close').addEventListener('click', closeCamera);
   for (const id of ['#photo-input', '#camera-input']) {
     $(id).addEventListener('change', e => {
       stageFiles([...e.target.files]);
@@ -448,6 +496,11 @@ async function main() {
   await loadUserItems();
   renderCloset();
   await restoreStaging();
+  if (stagedPhotos.length) {
+    // photos recovered from a previous session: land the user right on them
+    activateTab('add');
+    $('#cat-status').textContent = `Restored ${stagedPhotos.length} photo${stagedPhotos.length === 1 ? '' : 's'} from your last session.`;
+  }
   $('#sample-banner').hidden = !mergedCatalog().some(it => it.sample);
 
   try {

@@ -49,6 +49,15 @@
     <section id="closet"></section>
   </main>
 
+  <div id="camera-modal" hidden>
+    <video id="camera-video" autoplay playsinline muted></video>
+    <div class="camera-controls">
+      <button id="camera-close" class="mini-btn">Done</button>
+      <button id="camera-shutter" aria-label="Take photo"></button>
+      <span id="camera-count"></span>
+    </div>
+  </div>
+
   <main id="add-view" hidden>
     <section class="card">
       <input type="file" id="photo-input" accept="image/*" multiple hidden>
