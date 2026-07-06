@@ -744,7 +744,7 @@ const CATALOGER = (() => {
   return {
     CATEGORY_LABELS, COLOR_NAMES, PATTERN_LABELS, MATERIAL_LABELS,
     draftGroups, addAnglesToDraft, saveItem, addPhotosToItem,
-    _internals: { loadSeg, loadCLIP, loadOCR, fileToCanvas, classMasks, fileToRawPieces, parseHints, findBlobs, cutout, productRender, dominantColors },
+    _internals: { loadSeg, loadCLIP, loadOCR, fileToCanvas, classMasks, fileToRawPieces, parseHints, applyHints, findBlobs, cutout, productRender, dominantColors },
   };
 })();
 
