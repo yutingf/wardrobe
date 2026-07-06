@@ -1,8 +1,10 @@
 # CLAUDE.md: Wardrobe repo
 
 Zero-token daily outfit recommender. `README.md` explains the design. Pure
-static site (GitHub Pages at https://yutingf.github.io/wardrobe/, public repo,
-swim-meet model) + Open-Meteo + in-browser CLIP cataloging.
+static site (GitHub Pages at https://d4f-gif.github.io/wardrobe/, public repo
+under the separate `d4f-gif` account so it never shows on the yutingf
+profile; yutingf has admin collaborator access for pushes) + Open-Meteo +
+in-browser CLIP cataloging.
 
 ## How clothes get cataloged
 

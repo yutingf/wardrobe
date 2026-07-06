@@ -1,7 +1,7 @@
 # Wardrobe: what to wear today
 
 A zero-token daily outfit recommender, live at
-https://yutingf.github.io/wardrobe/. Pick the occasion (Work / School / Kids
+https://d4f-gif.github.io/wardrobe/. Pick the occasion (Work / School / Kids
 event) and it recommends layered outfits from your own closet based on live
 Washington, DC weather.
 
