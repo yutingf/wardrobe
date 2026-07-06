@@ -240,6 +240,10 @@ function draftCardHTML(draft, di) {
         <button class="mini-btn add-angle-btn" data-di="${di}">📷 Add angles</button></div>`
     : '';
   return `<div class="card draft" data-di="${di}">
+    <div class="draft-head">
+      <span class="draft-num">Garment ${di + 1}</span>
+      <button class="mini-btn skip-btn" data-di="${di}">Skip / not mine</button>
+    </div>
     <div class="draft-photos">${photos}</div>
     ${labelBadge}${angleAsk}
     <div class="draft-fields">
@@ -275,6 +279,11 @@ function renderDrafts() {
     readDraftEdits(); // keep any manual fixes before re-drafting
     angleTargetDraft = pendingDrafts[Number(btn.dataset.di)];
     $('#angle-input').click();
+  }));
+  el.querySelectorAll('.skip-btn').forEach(btn => btn.addEventListener('click', () => {
+    readDraftEdits(); // preserve edits on the other cards before re-indexing
+    pendingDrafts.splice(Number(btn.dataset.di), 1);
+    renderDrafts();
   }));
 }
 
