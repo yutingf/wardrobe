@@ -155,6 +155,15 @@ nav .tab-btn.active, .occ-btn.active {
   margin-bottom: 12px;
 }
 .angle-ask .mini-btn { margin-left: 8px; color: var(--warn); border-color: var(--warn); }
+.label-badge {
+  font-size: 0.85rem;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--card));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line));
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+}
 
 #camera-modal { position: fixed; inset: 0; background: #000; z-index: 50; display: flex; flex-direction: column; }
 #camera-modal[hidden] { display: none; }

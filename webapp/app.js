@@ -231,6 +231,9 @@ function draftCardHTML(draft, di) {
   const mergeOpts = ['<option value="">— save as new item —</option>',
     ...userItems.map(it => `<option value="${esc(it.id)}">add photos to: ${esc(it.name)}</option>`)].join('');
   const photos = draft.photos.map(p => `<img class="draft-photo" src="${p.url}" alt="">`).join('');
+  const labelBadge = draft.fromLabel
+    ? `<div class="label-badge">✓ Read from the product label — color, category and material taken from the listing text.</div>`
+    : '';
   const angleAsk = draft.needsMoreAngles
     ? `<div class="angle-ask">Low confidence. Add 1-2 more angles: a straight-on flat
         shot, plus a close-up of the fabric.
@@ -238,7 +241,7 @@ function draftCardHTML(draft, di) {
     : '';
   return `<div class="card draft" data-di="${di}">
     <div class="draft-photos">${photos}</div>
-    ${angleAsk}
+    ${labelBadge}${angleAsk}
     <div class="draft-fields">
       <label>Name <input type="text" data-f="name" value="${esc(draft.name)}"></label>
       <label>Category (${conf('category')}) <select data-f="category">${catOpts}</select></label>
