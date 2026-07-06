@@ -19,7 +19,7 @@ const CATALOGER = (() => {
   const CLIP_MODEL = 'Xenova/clip-vit-base-patch32';
   const RMBG_MODEL = 'briaai/RMBG-1.4';
   const SAME_ITEM_THRESHOLD = 0.86; // cosine similarity above this = same garment
-  const PROC_EDGE = 1024;           // working resolution
+  const PROC_EDGE = 768;            // working resolution (phone tabs crash on OOM above this)
   const OUT_EDGE = 768;             // saved product-photo resolution
   const MIN_BLOB_FRAC = 0.04;       // mask blobs smaller than this are noise
 
@@ -100,22 +100,24 @@ const CATALOGER = (() => {
             onProgress(`downloading models ${Math.round((p.loaded / p.total) * 100)}% (${p.file})`);
           }
         };
-        const [processor, tokenizer, vision, text, rmbg, rmbgProcessor] = await Promise.all([
-          T.AutoProcessor.from_pretrained(CLIP_MODEL, { progress_callback: prog }),
-          T.AutoTokenizer.from_pretrained(CLIP_MODEL),
-          T.CLIPVisionModelWithProjection.from_pretrained(CLIP_MODEL, { progress_callback: prog }),
-          T.CLIPTextModelWithProjection.from_pretrained(CLIP_MODEL, { progress_callback: prog }),
-          T.AutoModel.from_pretrained(RMBG_MODEL, { config: { model_type: 'custom' }, progress_callback: prog }),
-          T.AutoProcessor.from_pretrained(RMBG_MODEL, {
-            config: {
-              do_normalize: true, do_pad: false, do_rescale: true, do_resize: true,
-              image_mean: [0.5, 0.5, 0.5], image_std: [1, 1, 1],
-              feature_extractor_type: 'ImageFeatureExtractor',
-              resample: 2, rescale_factor: 0.00392156862745098,
-              size: { width: 1024, height: 1024 },
-            },
-          }),
-        ]);
+        // sequential, not parallel: loading everything at once spikes memory
+        // and kills phone tabs
+        const processor = await T.AutoProcessor.from_pretrained(CLIP_MODEL, { progress_callback: prog });
+        const tokenizer = await T.AutoTokenizer.from_pretrained(CLIP_MODEL);
+        const vision = await T.CLIPVisionModelWithProjection.from_pretrained(CLIP_MODEL, { progress_callback: prog });
+        const text = await T.CLIPTextModelWithProjection.from_pretrained(CLIP_MODEL, { progress_callback: prog });
+        const rmbg = await T.AutoModel.from_pretrained(RMBG_MODEL, { config: { model_type: 'custom' }, progress_callback: prog });
+        const rmbgProcessor = await T.AutoProcessor.from_pretrained(RMBG_MODEL, {
+          config: {
+            do_normalize: true, do_pad: false, do_rescale: true, do_resize: true,
+            image_mean: [0.5, 0.5, 0.5], image_std: [1, 1, 1],
+            feature_extractor_type: 'ImageFeatureExtractor',
+            resample: 2, rescale_factor: 0.00392156862745098,
+            // 512 instead of the model's native 1024: activation memory drops
+            // to a quarter, which phones need; mask quality stays usable
+            size: { width: 512, height: 512 },
+          },
+        });
         return { T, processor, tokenizer, vision, text, rmbg, rmbgProcessor };
       })();
       modelPromise.catch(() => { modelPromise = null; }); // allow retry after failure

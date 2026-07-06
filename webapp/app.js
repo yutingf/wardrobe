@@ -306,6 +306,7 @@ async function saveDrafts() {
   }
   const n = pendingDrafts.length;
   pendingDrafts = [];
+  await clearStagingDB();
   renderDrafts();
   await refresh();
   $('#cat-status').textContent = `Saved ${n} garment(s) to the closet ✓`;
@@ -313,15 +314,20 @@ async function saveDrafts() {
 
 // Photos accumulate in a staging strip (from the camera one at a time, or the
 // picker in bulk), then one Analyze pass groups and classifies the whole batch.
-let stagedPhotos = []; // { file, url }
+// Each staged photo is ALSO persisted to IndexedDB immediately: phones evict
+// the page while the camera app is open (and can crash it during analysis),
+// and persisted staging means nothing is lost — shots reappear after reload.
+let stagedPhotos = []; // { file, url, key }
+let stagingSeq = 0;
 
 function renderStaging() {
   const el = $('#staging');
   el.innerHTML = stagedPhotos.map((p, i) =>
     `<div class="staged"><img src="${p.url}" alt="staged photo"><button class="unstage" data-i="${i}">✕</button></div>`).join('');
-  el.querySelectorAll('.unstage').forEach(b => b.addEventListener('click', () => {
+  el.querySelectorAll('.unstage').forEach(b => b.addEventListener('click', async () => {
     const i = Number(b.dataset.i);
     URL.revokeObjectURL(stagedPhotos[i].url);
+    await DBX.deletePhotos([stagedPhotos[i].key]);
     stagedPhotos.splice(i, 1);
     renderStaging();
   }));
@@ -330,9 +336,23 @@ function renderStaging() {
   btn.textContent = `Analyze ${stagedPhotos.length} photo${stagedPhotos.length === 1 ? '' : 's'}`;
 }
 
-function stageFiles(files) {
-  for (const f of files) stagedPhotos.push({ file: f, url: URL.createObjectURL(f) });
+async function stageFiles(files) {
+  for (const f of files) {
+    const key = `staging-${Date.now()}-${stagingSeq++}`;
+    await DBX.putPhoto(key, f);
+    stagedPhotos.push({ file: f, url: URL.createObjectURL(f), key });
+  }
   renderStaging();
+}
+
+async function restoreStaging() {
+  const rec = await DBX.listPhotos('staging-');
+  for (const r of rec) stagedPhotos.push({ file: r.blob, url: URL.createObjectURL(r.blob), key: r.key });
+  if (stagedPhotos.length) renderStaging();
+}
+
+async function clearStagingDB() {
+  await DBX.deletePhotos((await DBX.listPhotos('staging-')).map(r => r.key));
 }
 
 async function analyzeStaged() {
@@ -346,6 +366,8 @@ async function analyzeStaged() {
     pendingDrafts = drafts;
     stagedPhotos.forEach(p => URL.revokeObjectURL(p.url));
     stagedPhotos = [];
+    // staging stays in IndexedDB until the drafts are SAVED, so a crash
+    // during review still leaves the shots recoverable on reload
     renderStaging();
     renderDrafts();
     status.textContent = '';
@@ -425,6 +447,7 @@ async function main() {
 
   await loadUserItems();
   renderCloset();
+  await restoreStaging();
   $('#sample-banner').hidden = !mergedCatalog().some(it => it.sample);
 
   try {

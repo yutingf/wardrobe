@@ -44,6 +44,10 @@ const DBX = (() => {
       const s = await store('photos', 'readwrite');
       await Promise.all(keys.map(k => reqP(s.delete(k))));
     },
+    async listPhotos(prefix) {
+      const all = await reqP((await store('photos', 'readonly')).getAll());
+      return all.filter(r => r.key.startsWith(prefix));
+    },
   };
 })();
 
