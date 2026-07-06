@@ -406,6 +406,39 @@ async function captureFrame() {
   $('#camera-count').textContent = `${stagedPhotos.length} staged`;
 }
 
+// ------------------------------------------------------------------ paste
+
+async function pasteImages() {
+  const status = $('#cat-status');
+  try {
+    const items = await navigator.clipboard.read();
+    const files = [];
+    for (const item of items) {
+      const type = item.types.find(t => t.startsWith('image/'));
+      if (!type) continue;
+      const blob = await item.getType(type);
+      files.push(new File([blob], `pasted-${Date.now()}.${type.split('/')[1] || 'png'}`, { type }));
+    }
+    if (!files.length) { status.textContent = 'No image on the clipboard.'; return; }
+    await stageFiles(files);
+    status.textContent = '';
+  } catch (err) {
+    status.textContent = `Could not read the clipboard (${err.message}). Copy an image and try Ctrl/Cmd+V instead.`;
+  }
+}
+
+// Ctrl/Cmd+V works anywhere in the app, not just on the Add tab
+document.addEventListener('paste', e => {
+  const files = [...((e.clipboardData && e.clipboardData.items) || [])]
+    .filter(it => it.type.startsWith('image/'))
+    .map(it => it.getAsFile())
+    .filter(Boolean);
+  if (!files.length) return;
+  e.preventDefault();
+  activateTab('add');
+  stageFiles(files);
+});
+
 async function analyzeStaged() {
   if (!stagedPhotos.length) return;
   const status = $('#cat-status');
@@ -475,6 +508,7 @@ async function main() {
   document.querySelectorAll('.tab-btn').forEach(btn => btn.addEventListener('click', () => activateTab(btn.dataset.tab)));
 
   $('#upload-btn').addEventListener('click', () => $('#photo-input').click());
+  $('#paste-btn').addEventListener('click', pasteImages);
   $('#camera-btn').addEventListener('click', openCamera);
   $('#camera-shutter').addEventListener('click', captureFrame);
   $('#camera-close').addEventListener('click', closeCamera);

@@ -89,25 +89,45 @@ const CATALOGER = (() => {
 
   // ---------------------------------------------------------------- models
 
-  let modelPromise = null;
+  // The two models never share memory: RMBG runs first over all photos and is
+  // fully disposed before CLIP loads. Peak usage = one model, not both —
+  // phone tabs get OOM-killed otherwise.
+  let libPromise = null, clipPromise = null, rmbgPromise = null;
 
-  function loadModels(onProgress) {
-    if (!modelPromise) {
-      modelPromise = (async () => {
-        const T = await import(CDN);
-        const prog = p => {
-          if (p.status === 'progress' && p.total) {
-            onProgress(`downloading models ${Math.round((p.loaded / p.total) * 100)}% (${p.file})`);
-          }
-        };
-        // sequential, not parallel: loading everything at once spikes memory
-        // and kills phone tabs
+  function lib() {
+    if (!libPromise) libPromise = import(CDN);
+    return libPromise;
+  }
+
+  const progFor = onProgress => p => {
+    if (p.status === 'progress' && p.total) {
+      onProgress(`downloading models ${Math.round((p.loaded / p.total) * 100)}% (${p.file})`);
+    }
+  };
+
+  function loadCLIP(onProgress) {
+    if (!clipPromise) {
+      clipPromise = (async () => {
+        const T = await lib();
+        const prog = progFor(onProgress);
         const processor = await T.AutoProcessor.from_pretrained(CLIP_MODEL, { progress_callback: prog });
         const tokenizer = await T.AutoTokenizer.from_pretrained(CLIP_MODEL);
         const vision = await T.CLIPVisionModelWithProjection.from_pretrained(CLIP_MODEL, { progress_callback: prog });
         const text = await T.CLIPTextModelWithProjection.from_pretrained(CLIP_MODEL, { progress_callback: prog });
-        const rmbg = await T.AutoModel.from_pretrained(RMBG_MODEL, { config: { model_type: 'custom' }, progress_callback: prog });
-        const rmbgProcessor = await T.AutoProcessor.from_pretrained(RMBG_MODEL, {
+        return { T, processor, tokenizer, vision, text };
+      })();
+      clipPromise.catch(() => { clipPromise = null; }); // allow retry after failure
+    }
+    return clipPromise;
+  }
+
+  function loadRMBG(onProgress) {
+    if (!rmbgPromise) {
+      rmbgPromise = (async () => {
+        const T = await lib();
+        const prog = progFor(onProgress);
+        const model = await T.AutoModel.from_pretrained(RMBG_MODEL, { config: { model_type: 'custom' }, progress_callback: prog });
+        const processor = await T.AutoProcessor.from_pretrained(RMBG_MODEL, {
           config: {
             do_normalize: true, do_pad: false, do_rescale: true, do_resize: true,
             image_mean: [0.5, 0.5, 0.5], image_std: [1, 1, 1],
@@ -118,11 +138,20 @@ const CATALOGER = (() => {
             size: { width: 512, height: 512 },
           },
         });
-        return { T, processor, tokenizer, vision, text, rmbg, rmbgProcessor };
+        return { T, model, processor };
       })();
-      modelPromise.catch(() => { modelPromise = null; }); // allow retry after failure
+      rmbgPromise.catch(() => { rmbgPromise = null; });
     }
-    return modelPromise;
+    return rmbgPromise;
+  }
+
+  async function disposeRMBG() {
+    if (!rmbgPromise) return;
+    try {
+      const r = await rmbgPromise;
+      await r.model.dispose();
+    } catch { /* disposing is best-effort */ }
+    rmbgPromise = null;
   }
 
   // ---------------------------------------------------------------- math
@@ -164,14 +193,14 @@ const CATALOGER = (() => {
 
   // ---------------------------------------------------------------- background removal
 
-  async function garmentMask(m, canvas) {
+  async function garmentMask(r, canvas) {
     const ctx = canvas.getContext('2d');
     const d = ctx.getImageData(0, 0, canvas.width, canvas.height);
     // RGBA -> RGB: the RMBG feature extractor expects 3 channels
-    const raw = new m.T.RawImage(d.data, canvas.width, canvas.height, 4).rgb();
-    const { pixel_values } = await m.rmbgProcessor(raw);
-    const { output } = await m.rmbg({ input: pixel_values });
-    const maskImg = await m.T.RawImage.fromTensor(output[0].mul(255).to('uint8'))
+    const raw = new r.T.RawImage(d.data, canvas.width, canvas.height, 4).rgb();
+    const { pixel_values } = await r.processor(raw);
+    const { output } = await r.model({ input: pixel_values });
+    const maskImg = await r.T.RawImage.fromTensor(output[0].mul(255).to('uint8'))
       .resize(canvas.width, canvas.height);
     return maskImg.data; // Uint8Array, length w*h
   }
@@ -465,13 +494,14 @@ const CATALOGER = (() => {
 
   // ---------------------------------------------------------------- pieces & drafting
 
-  // One file -> one or more pieces (product blob + url + embedding + colors).
-  async function fileToPieces(m, file, sourceIndex, onProgress) {
+  // Phase 1 (RMBG only): one file -> one or more rendered pieces, NO
+  // embeddings yet. Keeps the product canvas around for the CLIP phase.
+  async function fileToRawPieces(r, file, sourceIndex, onProgress) {
     const canvas = await fileToCanvas(file);
     onProgress('removing background…');
     let mask;
     try {
-      mask = await garmentMask(m, canvas);
+      mask = await garmentMask(r, canvas);
     } catch (err) {
       console.warn('background removal failed, keeping the whole photo:', err);
       mask = null;
@@ -483,13 +513,19 @@ const CATALOGER = (() => {
       const colors = dominantColors(img);
       const product = productRender(img);
       const blob = await canvasToBlob(product);
-      pieces.push({
-        blob, url: URL.createObjectURL(blob),
-        embed: await embedCanvas(m, product),
-        colors, sourceIndex,
-      });
+      pieces.push({ blob, url: URL.createObjectURL(blob), colors, sourceIndex, _product: product });
     }
     return pieces;
+  }
+
+  // Phase 2 (CLIP only): embed the rendered pieces and release the canvases.
+  async function embedPieces(m, pieces, onProgress) {
+    for (let i = 0; i < pieces.length; i++) {
+      if (pieces[i].embed) continue;
+      onProgress(`reading garment ${i + 1} of ${pieces.length}…`);
+      pieces[i].embed = await embedCanvas(m, pieces[i]._product);
+      pieces[i]._product = null;
+    }
   }
 
   // Cluster pieces into garments. Pieces cut from the SAME source photo are
@@ -551,12 +587,17 @@ const CATALOGER = (() => {
   // ---------------------------------------------------------------- public API
 
   async function draftGroups(files, onProgress) {
-    const m = await loadModels(onProgress);
+    // phase 1: background removal on every photo, then free the model
+    const r = await loadRMBG(onProgress);
     const pieces = [];
     for (let i = 0; i < files.length; i++) {
       onProgress(`photo ${i + 1} of ${files.length}: analyzing…`);
-      pieces.push(...await fileToPieces(m, files[i], i, msg => onProgress(`photo ${i + 1} of ${files.length}: ${msg}`)));
+      pieces.push(...await fileToRawPieces(r, files[i], i, msg => onProgress(`photo ${i + 1} of ${files.length}: ${msg}`)));
     }
+    await disposeRMBG();
+    // phase 2: classification
+    const m = await loadCLIP(onProgress);
+    await embedPieces(m, pieces, onProgress);
     onProgress('grouping pieces into garments…');
     const groups = clusterPieces(pieces);
     const drafts = [];
@@ -570,13 +611,18 @@ const CATALOGER = (() => {
 
   // Extra angles for an existing draft: process, append, re-draft attributes.
   async function addAnglesToDraft(draft, files, onProgress) {
-    const m = await loadModels(onProgress);
+    const r = await loadRMBG(onProgress);
+    const fresh = [];
     for (let i = 0; i < files.length; i++) {
       onProgress(`extra angle ${i + 1} of ${files.length}: analyzing…`);
-      const pieces = await fileToPieces(m, files[i], -1 - i, msg => onProgress(msg));
-      // an "extra angle" photo should hold one piece; take the largest if split
-      draft.photos.push(pieces[0]);
+      const pieces = await fileToRawPieces(r, files[i], -1 - i, msg => onProgress(msg));
+      // an "extra angle" photo should hold one piece; take the first if split
+      fresh.push(pieces[0]);
     }
+    await disposeRMBG();
+    const m = await loadCLIP(onProgress);
+    await embedPieces(m, fresh, onProgress);
+    draft.photos.push(...fresh);
     Object.assign(draft, await attributesFor(m, draft.photos));
     onProgress('');
     return draft;
@@ -621,7 +667,7 @@ const CATALOGER = (() => {
     CATEGORY_LABELS, COLOR_NAMES, PATTERN_LABELS, MATERIAL_LABELS,
     draftGroups, addAnglesToDraft, saveItem, addPhotosToItem,
     // stage-by-stage access for headless pipeline tests
-    _internals: { loadModels, fileToCanvas, garmentMask, findBlobs, cutout, productRender, dominantColors },
+    _internals: { loadRMBG, loadCLIP, disposeRMBG, fileToCanvas, garmentMask, findBlobs, cutout, productRender, dominantColors },
   };
 })();
 
