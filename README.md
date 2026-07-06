@@ -11,11 +11,15 @@ Washington, DC weather.
   Open-Meteo API (no key needed) and runs a local rules engine. It makes no AI
   calls and needs no server.
 - **Adding clothes also costs zero tokens.** The Add clothes tab has a camera
-  button (opens the phone camera) and a photo picker. A small CLIP vision
-  model (transformers.js, downloaded once and cached, ~100 MB) runs in the
-  browser to (1) group photos of the same garment shot from different angles,
-  and (2) draft each garment's category, color, pattern, and material with
-  confidence scores. You review and correct the drafts, then save. Items and
+  button (opens the phone camera) and a photo picker. Two vision models
+  (transformers.js, downloaded once and cached, ~150 MB) run in the browser:
+  RMBG-1.4 removes the background and splits a photo holding several
+  separated pieces into one garment each; CLIP groups photos of the same
+  garment shot from different angles and drafts category, pattern, and
+  material with confidence scores. Color comes from the garment's own pixels.
+  Every saved photo becomes a product-style catalog shot: cutout on white,
+  auto-straightened, light corrected. Low-confidence drafts ask for specific
+  extra angles. You review and correct the drafts, then save. Items and
   photos persist in the browser's IndexedDB; **photos never leave the
   device**, so nothing personal reaches the public repo or any server.
 

@@ -9,10 +9,16 @@ in-browser CLIP cataloging.
 ## How clothes get cataloged
 
 Primary path (zero tokens, no Claude involved): the user photographs clothes
-in the Add clothes tab; `webapp/cataloger.js` groups photos into garments and
-drafts category/color/pattern/material; the user corrects and saves. Items and
-photos persist in the browser's IndexedDB on that device only. Photos never
-reach the repo or any server.
+in the Add clothes tab; `webapp/cataloger.js` removes backgrounds (RMBG-1.4),
+splits multi-piece photos into one garment each, renders product-style shots
+(cutout on white, straightened, light corrected), groups angles with CLIP,
+and drafts category/pattern/material (color comes from garment pixels with a
+saturation guard); the user corrects and saves. Items and photos persist in
+the browser's IndexedDB on that device only. Photos never reach the repo or
+any server. `CATALOGER._internals` exposes the pipeline stages for headless
+tests. Known test artifact: a synthetic collage of pasted rectangular photos
+keeps each rectangle's internal background (RMBG sees the rectangle as the
+object); real photos of garments on a surface segment cleanly.
 
 Fallback path (tokens, once per item): the user can still hand Claude photos
 to catalog. Then follow: propose entries matching the schema at the top of
