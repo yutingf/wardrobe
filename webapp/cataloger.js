@@ -208,13 +208,22 @@ const CATALOGER = (() => {
         return loadWithFallback(
           async opts => {
             const vision = await T.CLIPVisionModelWithProjection.from_pretrained(CLIP_MODEL, { progress_callback: prog, ...opts });
-            const text = await T.CLIPTextModelWithProjection.from_pretrained(CLIP_MODEL, { progress_callback: prog, ...opts });
-            return { T, processor, tokenizer, vision, text };
+            // the text model loads ONLY if a label set is missing from
+            // label-embeds.json — phones normally never touch it
+            let textModel = null;
+            const bundle = {
+              T, processor, tokenizer, vision,
+              async getText() {
+                if (!textModel) textModel = await T.CLIPTextModelWithProjection.from_pretrained(CLIP_MODEL, { progress_callback: prog, ...opts });
+                return textModel;
+              },
+              async disposeText() {
+                if (textModel) { try { await textModel.dispose(); } catch { /* best effort */ } textModel = null; }
+              },
+            };
+            return bundle;
           },
-          async b => {
-            await b.vision(await processor(tinyImage(T)));
-            await b.text(tokenizer(['a'], { padding: true, truncation: true }));
-          },
+          async b => { await b.vision(await processor(tinyImage(T))); },
           'CLIP',
         );
       })();
@@ -254,7 +263,7 @@ const CATALOGER = (() => {
     try {
       const m = await clipPromise;
       try { await m.vision.dispose(); } catch { /* may already be disposed */ }
-      try { await m.text.dispose(); } catch { /* best effort */ }
+      await m.disposeText();
     } catch { /* best effort */ }
     clipPromise = null;
   }
@@ -555,9 +564,18 @@ const CATALOGER = (() => {
     const { image_embeds } = await m.vision(inputs);
     return normalize(Array.from(image_embeds.data));
   }
-  // Text embeddings never change, so they are cached in IndexedDB: after the
-  // first successful run a device never touches the text model again.
+  // Label embeddings are PRECOMPUTED (label-embeds.json, generated with this
+  // exact model + templates) and shipped with the app: phones never load the
+  // CLIP text model at all. Running the text model remains only a fallback
+  // for label sets missing from the file (e.g., during development).
   const textCache = {};
+  let staticEmbedsPromise = null;
+  function staticEmbeds() {
+    if (!staticEmbedsPromise) {
+      staticEmbedsPromise = fetch('label-embeds.json').then(r => r.ok ? r.json() : {}).catch(() => ({}));
+    }
+    return staticEmbedsPromise;
+  }
   async function kvGet(key) {
     try { const b = await DBX.getPhoto(key); return b ? JSON.parse(await b.text()) : null; } catch { return null; }
   }
@@ -567,17 +585,20 @@ const CATALOGER = (() => {
 
   async function ensembleTextEmbeds(m, labels, cacheKey) {
     if (textCache[cacheKey]) return textCache[cacheKey];
+    const shipped = (await staticEmbeds())[cacheKey];
+    if (shipped && shipped.length === labels.length) { textCache[cacheKey] = shipped; return shipped; }
     const idbKey = `textembeds-v1-${cacheKey}`;
     const stored = await kvGet(idbKey);
     if (stored && stored.length === labels.length) { textCache[cacheKey] = stored; return stored; }
+    console.warn(`label set "${cacheKey}" missing from label-embeds.json; computing on-device`);
+    const textModel = await m.getText();
     const prompts = labels.flatMap(l => TEMPLATES.map(t => t.replace('{}', l)));
-    // small batches: one big padded batch is the memory spike that was
-    // killing phone tabs at the "grouping pieces" stage
+    // small batches: one big padded batch is a memory spike phones can't take
     const embeds = [];
     for (let i = 0; i < prompts.length; i += 8) {
       const chunk = prompts.slice(i, i + 8);
       const tokens = m.tokenizer(chunk, { padding: true, truncation: true });
-      const { text_embeds } = await m.text(tokens);
+      const { text_embeds } = await textModel(tokens);
       const dim = text_embeds.dims[1], flat = Array.from(text_embeds.data);
       for (let j = 0; j < chunk.length; j++) embeds.push(normalize(flat.slice(j * dim, (j + 1) * dim)));
     }
