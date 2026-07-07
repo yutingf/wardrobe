@@ -21,7 +21,9 @@ const CATALOGER = (() => {
   const CDN = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.4.2';
   const OCR_CDN = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.esm.min.js';
   const CLIP_MODEL = 'Xenova/clip-vit-base-patch32';
-  const SEG_MODEL = 'Xenova/segformer_b2_clothes';
+  // b0, not b2: a seventh of the parameters. Verified to still separate
+  // upper-clothes/pants with correct pixel colors; phones OOM-abort on b2.
+  const SEG_MODEL = 'Xenova/segformer_b0_clothes';
   const SAME_ITEM_THRESHOLD = 0.86; // cosine similarity above this = same garment
   const PROC_EDGE = 768;            // working resolution (phone tabs OOM above this)
   const OUT_EDGE = 768;             // saved product-photo resolution
@@ -168,12 +170,19 @@ const CATALOGER = (() => {
   }
   const deviceOpts = device => device === 'webgpu' ? { device: 'webgpu', dtype: 'fp16' } : { device: 'wasm', dtype: 'q8' };
 
+  // wasm aborts throw raw strings/numbers; make every error human-readable
+  const describeError = err => (err && err.message) ? err.message : String(err);
+
   async function loadWithFallback(builder, canary, label) {
     let lastErr;
     for (const device of deviceQueue()) {
       try {
-        const bundle = await builder(deviceOpts(device));
-        await canary(bundle);
+        // a wedged GPU init must fall back, not eat the whole watchdog
+        const bundle = await withTimeout((async () => {
+          const b = await builder(deviceOpts(device));
+          await canary(b);
+          return b;
+        })(), device === 'webgpu' ? 90000 : 300000, `${label} (${device})`);
         try { if (device === 'webgpu') localStorage.setItem('wardrobe.device', 'webgpu'); } catch { /* private mode */ }
         return bundle;
       } catch (err) {
@@ -182,7 +191,7 @@ const CATALOGER = (() => {
         try { if (device === 'webgpu') localStorage.setItem('wardrobe.device', 'wasm'); } catch { /* private mode */ }
       }
     }
-    throw lastErr;
+    throw new Error(`${label} failed on every device: ${describeError(lastErr)}`);
   }
 
   function tinyImage(T) {

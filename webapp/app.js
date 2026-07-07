@@ -497,8 +497,12 @@ async function analyzeStaged() {
       : '';
     crashClear();
   } catch (err) {
-    status.textContent = `Could not analyze photos: ${err.message}`;
-    crashClear(); // handled: not a crash
+    const stage = (crashReport() || {}).stage || 'starting';
+    const detail = (err && err.message) ? err.message : String(err);
+    status.textContent = `Analysis failed at "${stage}": ${detail}. `
+      + `Your photos are still staged; tap Analyze to retry (a different engine is tried automatically).`;
+    console.error('analysis failed at', stage, err);
+    crashClear(); // handled: not a tab crash
   } finally {
     btn.disabled = false;
   }
