@@ -293,13 +293,25 @@ async function handleAngleFiles(files) {
   const draft = angleTargetDraft;
   angleTargetDraft = null;
   const editedName = draft.name;
+  const onProgress = msg => { status.textContent = msg; };
   try {
-    await CATALOGER.addAnglesToDraft(draft, [...files], msg => { status.textContent = msg; });
+    const draftMeta = {
+      categoryPrior: draft.photos[0] ? draft.photos[0].categoryPrior : null,
+      photos: draft.photos.map(p => ({ embed: p.embed, colors: p.colors, areaFrac: p.areaFrac, sourceIndex: p.sourceIndex, categoryPrior: p.categoryPrior })),
+    };
+    try {
+      const res = await runInWorker({ cmd: 'angles', files: [...files], draftMeta }, onProgress);
+      draft.photos.push(...attachUrls(res.fresh));
+      Object.assign(draft, res.attrs);
+    } catch (workerErr) {
+      console.warn('analysis worker unavailable, running on the main thread:', workerErr);
+      await CATALOGER.addAnglesToDraft(draft, [...files], onProgress);
+    }
     draft.name = editedName; // attribute re-draft must not clobber a typed name
     renderDrafts();
     status.textContent = '';
   } catch (err) {
-    status.textContent = `Could not analyze the extra angles: ${err.message}`;
+    status.textContent = `Could not analyze the extra angles: ${(err && err.message) ? err.message : String(err)}`;
   }
 }
 
@@ -456,6 +468,36 @@ document.addEventListener('paste', e => {
   stageFiles(files, 'paste');
 });
 
+// ------------------------------------------------------------------ analysis worker
+
+// Heavy vision work runs in a FRESH worker per analysis, terminated when it
+// settles: terminating a worker is the only way its wasm memory actually
+// returns to the OS, which keeps the tab light after results (phone tabs
+// get killed otherwise). Falls back to running on the main thread.
+function runInWorker(payload, onProgress) {
+  return new Promise((resolve, reject) => {
+    let worker;
+    try { worker = new Worker('analysis-worker.js?v=17', { type: 'module' }); }
+    catch (err) { reject(err); return; }
+    const id = Math.random().toString(36).slice(2);
+    const done = fn => arg => { worker.terminate(); fn(arg); };
+    const ok = done(resolve), fail = done(reject);
+    worker.onerror = e => fail(new Error(e.message || 'analysis worker failed to start'));
+    worker.onmessage = e => {
+      if (e.data.id !== id) return;
+      if (e.data.type === 'progress') onProgress(e.data.msg);
+      else if (e.data.type === 'result') ok(e.data);
+      else fail(new Error(e.data.message));
+    };
+    worker.postMessage({ id, ...payload });
+  });
+}
+
+function attachUrls(photos) {
+  for (const p of photos) if (!p.url && p.blob) p.url = URL.createObjectURL(p.blob);
+  return photos;
+}
+
 // Crash forensics: the current analysis stage is checkpointed to
 // localStorage. If the tab gets killed mid-analysis (phone OOM), the next
 // load finds the marker and reports exactly where it died.
@@ -477,11 +519,22 @@ async function analyzeStaged() {
   crashMark('starting');
   try {
     const ocrFlags = stagedPhotos.map(p => p.source !== 'camera');
-    const drafts = await CATALOGER.draftGroups(
-      stagedPhotos.map(p => p.file),
-      msg => { status.textContent = msg; if (msg) crashMark(msg); },
-      ocrFlags,
-    );
+    const files = stagedPhotos.map(p => p.file);
+    const onProgress = msg => { status.textContent = msg; if (msg) crashMark(msg); };
+    // OCR runs here (its own worker, terminated after); vision runs in the
+    // analysis worker so its memory is returned when the worker terminates
+    const hints = await CATALOGER.readHints(files, ocrFlags, onProgress);
+    let drafts;
+    try {
+      const res = await runInWorker({ cmd: 'draft', files, hints }, onProgress);
+      drafts = res.drafts.list;
+      drafts.ocr = res.drafts.ocr;
+      for (const d of drafts) attachUrls(d.photos);
+    } catch (workerErr) {
+      console.warn('analysis worker unavailable, running on the main thread:', workerErr);
+      crashMark('starting (main thread)');
+      drafts = await CATALOGER.draftGroupsCore(files, hints, onProgress);
+    }
     for (const d of drafts) d.name = `${d.color} ${d.category}`.replace(/^./, c => c.toUpperCase());
     // tell the user when a pasted image had no readable text
     const unread = (drafts.ocr ? drafts.ocr.attempted.filter(i => !drafts.ocr.found.includes(i)) : []);

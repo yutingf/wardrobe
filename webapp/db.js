@@ -51,4 +51,5 @@ const DBX = (() => {
   };
 })();
 
-if (typeof window !== 'undefined') window.DBX = DBX;
+// window on the main thread, self inside the analysis worker
+(typeof window !== 'undefined' ? window : self).DBX = DBX;

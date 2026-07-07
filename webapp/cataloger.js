@@ -52,6 +52,12 @@ const CATALOGER = (() => {
     { label: 'a pair of boots', category: 'boots', layer: 'footwear', warmth: 2.5, formality: 3 },
     { label: 'a scarf', category: 'scarf', layer: 'accessory', warmth: 2, formality: 3 },
     { label: 'a winter hat or baseball cap', category: 'hat', layer: 'accessory', warmth: 1.5, formality: 1.5 },
+    // women's-wear vocabulary (a white blouse classified badly without these);
+    // appended so CAT_BY_NAME keeps the canonical first entry per category
+    { label: 'a blouse', category: 'shirt', layer: 'base', warmth: 1.5, formality: 3 },
+    { label: 'a tunic top', category: 'shirt', layer: 'base', warmth: 1.5, formality: 2.5 },
+    { label: 'a camisole or tank top', category: 'tee', layer: 'base', warmth: 1, formality: 1.5 },
+    { label: 'a turtleneck sweater', category: 'sweater', layer: 'mid', warmth: 3, formality: 3 },
   ];
   const CAT_BY_NAME = {};
   for (const c of CATEGORY_LABELS) if (!CAT_BY_NAME[c.category]) CAT_BY_NAME[c.category] = c;
@@ -162,9 +168,12 @@ const CATALOGER = (() => {
     }
   };
 
+  // localStorage does not exist inside workers; fall back to a no-op store
+  const store = (typeof localStorage !== 'undefined') ? localStorage : { getItem: () => null, setItem: () => {} };
+
   function deviceQueue() {
     try {
-      if (!('gpu' in navigator) || localStorage.getItem('wardrobe.device') === 'wasm') return ['wasm'];
+      if (!('gpu' in navigator) || store.getItem('wardrobe.device') === 'wasm') return ['wasm'];
     } catch { return ['wasm']; }
     return ['webgpu', 'wasm'];
   }
@@ -183,12 +192,12 @@ const CATALOGER = (() => {
           await canary(b);
           return b;
         })(), device === 'webgpu' ? 90000 : 300000, `${label} (${device})`);
-        try { if (device === 'webgpu') localStorage.setItem('wardrobe.device', 'webgpu'); } catch { /* private mode */ }
+        try { if (device === 'webgpu') store.setItem('wardrobe.device', 'webgpu'); } catch { /* private mode */ }
         return bundle;
       } catch (err) {
         lastErr = err;
         console.warn(`${label} unusable on ${device}, trying next:`, err);
-        try { if (device === 'webgpu') localStorage.setItem('wardrobe.device', 'wasm'); } catch { /* private mode */ }
+        try { if (device === 'webgpu') store.setItem('wardrobe.device', 'wasm'); } catch { /* private mode */ }
       }
     }
     throw new Error(`${label} failed on every device: ${describeError(lastErr)}`);
@@ -298,9 +307,7 @@ const CATALOGER = (() => {
       // downscale big screenshots first: faster and MORE reliable for OCR
       const bmp = await createImageBitmap(file);
       const scale = Math.min(1, 1200 / Math.max(bmp.width, bmp.height));
-      const c = document.createElement('canvas');
-      c.width = Math.max(1, Math.round(bmp.width * scale));
-      c.height = Math.max(1, Math.round(bmp.height * scale));
+      const c = makeCanvas(Math.max(1, Math.round(bmp.width * scale)), Math.max(1, Math.round(bmp.height * scale)));
       c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
       const { data } = await withTimeout(worker.recognize(c), 30000, 'reading text');
       return data.confidence >= 25 ? data.text : '';
@@ -337,16 +344,25 @@ const CATALOGER = (() => {
 
   // ---------------------------------------------------------------- canvas helpers
 
+  // Runs on the main thread AND inside the analysis worker (OffscreenCanvas).
+  const IN_WORKER = typeof document === 'undefined';
+  function makeCanvas(w, h) {
+    if (IN_WORKER) return new OffscreenCanvas(w, h);
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    return c;
+  }
+
   async function fileToCanvas(file) {
     const bmp = await createImageBitmap(file);
     const scale = Math.min(1, PROC_EDGE / Math.max(bmp.width, bmp.height));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(bmp.width * scale));
-    canvas.height = Math.max(1, Math.round(bmp.height * scale));
+    const canvas = makeCanvas(Math.max(1, Math.round(bmp.width * scale)), Math.max(1, Math.round(bmp.height * scale)));
     canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height);
     return canvas;
   }
-  const canvasToBlob = (canvas, q = 0.9) => new Promise(res => canvas.toBlob(res, 'image/jpeg', q));
+  const canvasToBlob = (canvas, q = 0.9) => canvas.convertToBlob
+    ? canvas.convertToBlob({ type: 'image/jpeg', quality: q })
+    : new Promise(res => canvas.toBlob(res, 'image/jpeg', q));
 
   // ---------------------------------------------------------------- segmentation
 
@@ -480,15 +496,14 @@ const CATALOGER = (() => {
 
   function productRender(img) {
     autoAdjust(img);
-    let c = document.createElement('canvas');
-    c.width = img.width; c.height = img.height;
+    let c = makeCanvas(img.width, img.height);
     c.getContext('2d').putImageData(img, 0, 0);
     const angle = straightenAngle(img);
     if (angle !== 0) {
       const r = (angle * Math.PI) / 180;
       const cw = Math.ceil(Math.abs(c.width * Math.cos(r)) + Math.abs(c.height * Math.sin(r)));
       const ch = Math.ceil(Math.abs(c.width * Math.sin(r)) + Math.abs(c.height * Math.cos(r)));
-      const rc = document.createElement('canvas'); rc.width = cw; rc.height = ch;
+      const rc = makeCanvas(cw, ch);
       const ctx = rc.getContext('2d');
       ctx.translate(cw / 2, ch / 2); ctx.rotate(r); ctx.drawImage(c, -c.width / 2, -c.height / 2);
       c = rc;
@@ -502,9 +517,7 @@ const CATALOGER = (() => {
     const tw = maxX - minX + 1, th = maxY - minY + 1;
     const margin = Math.round(0.06 * Math.max(tw, th));
     const scale = Math.min(1, OUT_EDGE / (Math.max(tw, th) + 2 * margin));
-    const out = document.createElement('canvas');
-    out.width = Math.round((tw + 2 * margin) * scale);
-    out.height = Math.round((th + 2 * margin) * scale);
+    const out = makeCanvas(Math.round((tw + 2 * margin) * scale), Math.round((th + 2 * margin) * scale));
     const octx = out.getContext('2d');
     octx.fillStyle = '#ffffff'; octx.fillRect(0, 0, out.width, out.height);
     octx.drawImage(c, minX, minY, tw, th, margin * scale, margin * scale, tw * scale, th * scale);
@@ -625,7 +638,13 @@ const CATALOGER = (() => {
   }
 
   async function finalizePiece(p) {
-    if (p._needsBlob) { p.blob = await canvasToBlob(p._product); p.url = URL.createObjectURL(p.blob); p._needsBlob = false; }
+    if (p._needsBlob) {
+      p.blob = await canvasToBlob(p._product);
+      // object URLs created in a worker die when it terminates; the main
+      // thread creates them from the blob instead (see app.js attachUrls)
+      if (!IN_WORKER) p.url = URL.createObjectURL(p.blob);
+      p._needsBlob = false;
+    }
     return p;
   }
 
@@ -763,14 +782,12 @@ const CATALOGER = (() => {
 
   // ---------------------------------------------------------------- public API
 
-  // ocrFlags[i] = whether to read text on file i (camera shots skip it — no
-  // product text, and it avoids a slow/fragile OCR pass on the common path).
-  async function draftGroups(files, onProgress, ocrFlags = null) {
+  // Phase 0 (main thread only): OCR any images that might carry product
+  // text. ocrFlags[i] = whether to read text on file i (camera shots skip
+  // it: no product text there).
+  async function readHints(files, ocrFlags, onProgress) {
     const doOCR = i => (ocrFlags ? ocrFlags[i] : true);
     const hintsBySource = {};
-    const canvases = [];
-
-    // phase 0: OCR any images that might carry product text (best-effort)
     if (files.some((_, i) => doOCR(i))) {
       const worker = await loadOCR(onProgress);
       for (let i = 0; i < files.length; i++) {
@@ -780,6 +797,13 @@ const CATALOGER = (() => {
       }
       await disposeOCR();
     }
+    hintsBySource._attempted = files.map((_, i) => i).filter(i => doOCR(i));
+    return hintsBySource;
+  }
+
+  // Phases 1+2 (worker-safe): segmentation, rendering, CLIP, attributes.
+  async function draftGroupsCore(files, hintsBySource, onProgress) {
+    const canvases = [];
     for (let i = 0; i < files.length; i++) canvases[i] = await fileToCanvas(files[i]);
 
     // phase 1: clothes segmentation -> rendered pieces, then free the model
@@ -794,7 +818,7 @@ const CATALOGER = (() => {
     // phase 2: CLIP embedding, grouping, attributes
     const m = await withTimeout(loadCLIP(onProgress), 180000, 'model download');
     await embedPieces(m, pieces, onProgress);
-    await disposeCLIPVision(); // free the image half before the text step
+    await disposeCLIPVision(); // free the image half before the label lookup
     onProgress('grouping pieces into garments…');
     const drafts = [];
     for (const idxs of clusterPieces(pieces)) {
@@ -802,17 +826,26 @@ const CATALOGER = (() => {
       drafts.push({ photos: groupPieces, ...(await attributesFor(m, groupPieces)) });
     }
     await disposeCLIP();
-    applyHints(drafts, hintsBySource);
+    applyHints(drafts, hintsBySource || {});
     // let the UI report which images we tried to read text from and failed
+    const attempted = (hintsBySource && hintsBySource._attempted) || [];
     drafts.ocr = {
-      attempted: files.map((_, i) => i).filter(i => doOCR(i)),
-      found: Object.keys(hintsBySource).filter(k => hintsBySource[k]).map(Number),
+      attempted,
+      found: Object.keys(hintsBySource || {}).filter(k => k !== '_attempted' && hintsBySource[k]).map(Number),
     };
     onProgress('');
     return drafts;
   }
 
-  async function addAnglesToDraft(draft, files, onProgress) {
+  // main-thread convenience (fallback path and headless tests)
+  async function draftGroups(files, onProgress, ocrFlags = null) {
+    const hints = await readHints(files, ocrFlags, onProgress);
+    return draftGroupsCore(files, hints, onProgress);
+  }
+
+  // Worker-safe angles core: draftMeta carries only the existing pieces'
+  // embeddings/colors (no blobs needed to recompute attributes).
+  async function addAnglesCore(draftMeta, files, onProgress) {
     const s = await withTimeout(loadSeg(onProgress), 180000, 'model download');
     const fresh = [];
     for (let i = 0; i < files.length; i++) {
@@ -825,12 +858,23 @@ const CATALOGER = (() => {
     const m = await withTimeout(loadCLIP(onProgress), 180000, 'model download');
     await embedPieces(m, fresh, onProgress);
     await disposeCLIPVision();
-    // keep the draft's known class for the extra angles
-    for (const p of fresh) p.categoryPrior = draft.photos[0] ? draft.photos[0].categoryPrior : null;
-    draft.photos.push(...fresh);
-    Object.assign(draft, await attributesFor(m, draft.photos));
+    for (const p of fresh) p.categoryPrior = draftMeta.categoryPrior || null;
+    const all = [...(draftMeta.photos || []), ...fresh];
+    const attrs = await attributesFor(m, all);
     await disposeCLIP();
     onProgress('');
+    return { attrs, fresh };
+  }
+
+  // main-thread convenience: mutates the draft in place
+  async function addAnglesToDraft(draft, files, onProgress) {
+    const meta = {
+      categoryPrior: draft.photos[0] ? draft.photos[0].categoryPrior : null,
+      photos: draft.photos.map(p => ({ embed: p.embed, colors: p.colors, areaFrac: p.areaFrac, sourceIndex: p.sourceIndex, categoryPrior: p.categoryPrior })),
+    };
+    const { attrs, fresh } = await addAnglesCore(meta, files, onProgress);
+    draft.photos.push(...fresh);
+    Object.assign(draft, attrs);
     return draft;
   }
 
@@ -870,9 +914,11 @@ const CATALOGER = (() => {
 
   return {
     CATEGORY_LABELS, COLOR_NAMES, PATTERN_LABELS, MATERIAL_LABELS,
-    draftGroups, addAnglesToDraft, saveItem, addPhotosToItem,
+    draftGroups, readHints, draftGroupsCore, addAnglesCore, addAnglesToDraft,
+    saveItem, addPhotosToItem,
     _internals: { loadSeg, loadCLIP, loadOCR, fileToCanvas, classMasks, fileToRawPieces, parseHints, applyHints, findBlobs, cutout, productRender, dominantColors },
   };
 })();
 
-if (typeof window !== 'undefined') window.CATALOGER = CATALOGER;
+// window on the main thread, self inside the analysis worker
+(typeof window !== 'undefined' ? window : self).CATALOGER = CATALOGER;
