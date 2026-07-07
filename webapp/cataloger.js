@@ -244,6 +244,21 @@ const CATALOGER = (() => {
     segPromise = null;
   }
 
+  async function disposeCLIPVision() {
+    if (!clipPromise) return;
+    try { const m = await clipPromise; await m.vision.dispose(); } catch { /* best effort */ }
+  }
+
+  async function disposeCLIP() {
+    if (!clipPromise) return;
+    try {
+      const m = await clipPromise;
+      try { await m.vision.dispose(); } catch { /* may already be disposed */ }
+      try { await m.text.dispose(); } catch { /* best effort */ }
+    } catch { /* best effort */ }
+    clipPromise = null;
+  }
+
   // ---------------------------------------------------------------- OCR
 
   let ocrWorker = null;
@@ -540,15 +555,35 @@ const CATALOGER = (() => {
     const { image_embeds } = await m.vision(inputs);
     return normalize(Array.from(image_embeds.data));
   }
+  // Text embeddings never change, so they are cached in IndexedDB: after the
+  // first successful run a device never touches the text model again.
   const textCache = {};
+  async function kvGet(key) {
+    try { const b = await DBX.getPhoto(key); return b ? JSON.parse(await b.text()) : null; } catch { return null; }
+  }
+  function kvSet(key, value) {
+    try { DBX.putPhoto(key, new Blob([JSON.stringify(value)], { type: 'application/json' })); } catch { /* best effort */ }
+  }
+
   async function ensembleTextEmbeds(m, labels, cacheKey) {
     if (textCache[cacheKey]) return textCache[cacheKey];
+    const idbKey = `textembeds-v1-${cacheKey}`;
+    const stored = await kvGet(idbKey);
+    if (stored && stored.length === labels.length) { textCache[cacheKey] = stored; return stored; }
     const prompts = labels.flatMap(l => TEMPLATES.map(t => t.replace('{}', l)));
-    const tokens = m.tokenizer(prompts, { padding: true, truncation: true });
-    const { text_embeds } = await m.text(tokens);
-    const dim = text_embeds.dims[1], flat = Array.from(text_embeds.data);
-    const out = labels.map((_, li) => meanVec(TEMPLATES.map((_, ti) => normalize(flat.slice((li * TEMPLATES.length + ti) * dim, (li * TEMPLATES.length + ti + 1) * dim)))));
+    // small batches: one big padded batch is the memory spike that was
+    // killing phone tabs at the "grouping pieces" stage
+    const embeds = [];
+    for (let i = 0; i < prompts.length; i += 8) {
+      const chunk = prompts.slice(i, i + 8);
+      const tokens = m.tokenizer(chunk, { padding: true, truncation: true });
+      const { text_embeds } = await m.text(tokens);
+      const dim = text_embeds.dims[1], flat = Array.from(text_embeds.data);
+      for (let j = 0; j < chunk.length; j++) embeds.push(normalize(flat.slice(j * dim, (j + 1) * dim)));
+    }
+    const out = labels.map((_, li) => meanVec(TEMPLATES.map((_, ti) => embeds[li * TEMPLATES.length + ti])));
     textCache[cacheKey] = out;
+    kvSet(idbKey, out);
     return out;
   }
   function classify(embed, labelEmbeds) {
@@ -738,12 +773,14 @@ const CATALOGER = (() => {
     // phase 2: CLIP embedding, grouping, attributes
     const m = await withTimeout(loadCLIP(onProgress), 180000, 'model download');
     await embedPieces(m, pieces, onProgress);
+    await disposeCLIPVision(); // free the image half before the text step
     onProgress('grouping pieces into garments…');
     const drafts = [];
     for (const idxs of clusterPieces(pieces)) {
       const groupPieces = idxs.map(i => pieces[i]);
       drafts.push({ photos: groupPieces, ...(await attributesFor(m, groupPieces)) });
     }
+    await disposeCLIP();
     applyHints(drafts, hintsBySource);
     // let the UI report which images we tried to read text from and failed
     drafts.ocr = {
@@ -766,10 +803,12 @@ const CATALOGER = (() => {
     await disposeSeg();
     const m = await withTimeout(loadCLIP(onProgress), 180000, 'model download');
     await embedPieces(m, fresh, onProgress);
+    await disposeCLIPVision();
     // keep the draft's known class for the extra angles
     for (const p of fresh) p.categoryPrior = draft.photos[0] ? draft.photos[0].categoryPrior : null;
     draft.photos.push(...fresh);
     Object.assign(draft, await attributesFor(m, draft.photos));
+    await disposeCLIP();
     onProgress('');
     return draft;
   }
